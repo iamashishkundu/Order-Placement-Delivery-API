@@ -1,0 +1,151 @@
+{
+  "id": "5fa3b72c-e1a5-4f3b-821e-d4567890abcd",
+  "name": "Order Delivery API - Local",
+  "values": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api/v1",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "adminEmail",
+      "value": "admin@example.com",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "adminPassword",
+      "value": "AdminPassword@123",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "vendorEmail",
+      "value": "vendor.fresh@marketplace.com",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendorPhone",
+      "value": "+12025550111",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendorPassword",
+      "value": "VendorPass@123",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendorToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "vendorId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendor2Email",
+      "value": "vendor2.fresh@marketplace.com",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendor2Phone",
+      "value": "+12025550222",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "vendor2Token",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "vendor2Id",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "customerPhone",
+      "value": "+12025550333",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "customerToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "customerId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "staticOtp",
+      "value": "123456",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "categoryId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "product2Id",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "addressId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "onlineOrderId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "checkoutUrl",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}
