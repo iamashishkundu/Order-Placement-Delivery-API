@@ -54,10 +54,10 @@ const CASE_DETAILS = {
   },
   M3: {
     title: '3D Secure (3DS) Friction Flow Authentication',
-    card: '4000 0000 0000 3155 (or 3184)',
+    card: '4000 0027 6000 3184 (or 4000 0000 0000 3220)',
     steps: [
       'Open the Checkout URL.',
-      'Enter card 4000 0000 0000 3155 and click Pay.',
+      'Enter card 4000 0027 6000 3184 (or 4000 0000 0000 3220) and click Pay.',
       'In the "Customer Authentication" popup dialog, click "Complete authentication".'
     ]
   },
@@ -66,8 +66,8 @@ const CASE_DETAILS = {
     card: 'None (abandon page)',
     steps: [
       'Open the Checkout URL to reserve inventory, but do NOT pay.',
-      'In a terminal, expire session: stripe checkout sessions expire <providerSessionId> (or run stale cron).',
-      'Confirm Stripe CLI prints: 200 POST /api/v1/webhooks/stripe [checkout.session.expired]'
+      'Expire the session by running either: "npm run stripe:expire" OR "stripe checkout sessions expire <providerSessionId> --api-key <apiKey>"',
+      'Confirm terminal running "npm run stripe:listen" prints: 200 POST /api/v1/webhooks/stripe [checkout.session.expired]'
     ]
   },
   M5: {
@@ -85,7 +85,7 @@ const CASE_DETAILS = {
     steps: [
       'Open the Checkout URL and pay with 4242 4242 4242 4242.',
       'Confirm CLI logs 200 checkout.session.completed.',
-      'Customer cancels order via API before vendor begins preparing.'
+      'Cancel the order via customer API by running: "npm run order:cancel" (or PATCH /api/v1/customer/order/<orderId>/cancel).'
     ]
   },
   M7: {
@@ -99,10 +99,10 @@ const CASE_DETAILS = {
   },
   M8: {
     title: 'Charge Dispute / Chargeback Simulation & Resolution',
-    card: '4000 0000 0000 0110',
+    card: '4000 0000 0000 0259',
     steps: [
-      'Open Checkout URL and pay with 4000 0000 0000 0110.',
-      'In Stripe Dashboard -> Payments, create a test dispute on this payment.',
+      'Open Checkout URL (or http://localhost:5000/pay) and pay with 4000 0000 0000 0259.',
+      'Stripe automatically flags this test card as a fraudulent dispute.',
       'Confirm Stripe CLI prints: 200 POST /api/v1/webhooks/stripe [charge.dispute.created].'
     ]
   },
@@ -111,18 +111,21 @@ const CASE_DETAILS = {
     card: '4242 4242 4242 4242',
     steps: [
       'Pause or stop Stripe CLI listener (Ctrl+C).',
-      'Open Checkout URL and pay with 4242 4242 4242 4242.',
-      'Server misses webhook. Restart CLI listener and trigger backend reconciliation.'
+      'Open Checkout URL (or http://localhost:5000/pay) and pay with 4242 4242 4242 4242.',
+      'Server misses webhook (order stays pending_payment locally).',
+      'Trigger backend reconciliation by running: "npm run payments:reconcile".',
+      'Restart your Stripe CLI listener (npm run stripe:listen).'
     ]
   },
   M10: {
     title: 'Late Payment After Local Expiration (Auto-Refund Race Guard)',
     card: '4242 4242 4242 4242',
     steps: [
-      'Open Checkout URL, but do NOT pay yet.',
-      'Cancel or expire order in backend so order is cancelled.',
-      'Now submit payment on the open checkout page.',
-      'Webhook handler sees order is already cancelled and automatically refunds it!'
+      'Open Checkout URL (or http://localhost:5000/pay), but do NOT submit payment yet.',
+      'In a terminal, expire the order locally by running: "npm run order:expire:local".',
+      'Return to the open Stripe Checkout browser tab and click Pay with 4242 4242 4242 4242.',
+      'Confirm Stripe CLI logs "checkout.session.completed", and backend triggers an automatic refund!',
+      'Run verification: npm run test:payment:manual:verify -- M10'
     ]
   }
 };
@@ -198,18 +201,37 @@ if (mode === 'setup') {
     const envData = JSON.parse(fs.readFileSync(runtimeEnvPath, 'utf8'));
     const orderIdVal = envData.values?.find(v => v.key === 'orderId')?.value;
     const checkoutUrlVal = envData.values?.find(v => v.key === 'checkoutUrl')?.value;
+    const providerSessionIdVal = envData.values?.find(v => v.key === 'providerSessionId')?.value;
     const details = CASE_DETAILS[caseId];
 
     console.log(`\n` + `═`.repeat(72));
     console.log(`🎉 ${caseId} SETUP COMPLETE — READY FOR MANUAL ACTION!`);
     console.log(`═`.repeat(72));
     console.log(`Order ID:     ${orderIdVal || 'saved'}`);
-    console.log(`Checkout URL: \x1b[36m${checkoutUrlVal || 'N/A'}\x1b[0m`);
+    console.log(`Open Browser: \x1b[32mhttp://localhost:5000/pay\x1b[0m  (Clean short link — no line-wrap)`);
+    console.log(`Direct URL:   \x1b[36m${checkoutUrlVal || 'N/A'}\x1b[0m`);
+    if (providerSessionIdVal) {
+      console.log(`Session ID:   ${providerSessionIdVal}`);
+    }
     console.log(`Test Card:    \x1b[33m${details.card}\x1b[0m`);
     console.log(`\n📋 Action Steps:`);
     details.steps.forEach((st, idx) => {
-      console.log(`   ${idx + 1}. ${st}`);
+      const renderedStep = st
+        .replace(/Open the Checkout URL/g, 'Open the Checkout URL (or http://localhost:5000/pay)')
+        .replace(/<providerSessionId>/g, providerSessionIdVal || '<sessionId>')
+        .replace(/\${providerSessionId}/g, providerSessionIdVal || '<sessionId>')
+        .replace(/<apiKey>/g, process.env.STRIPE_SECRET_KEY || 'sk_test_...');
+      console.log(`   ${idx + 1}. ${renderedStep}`);
     });
+
+    // Automatically open in default browser to prevent URL wrapping corruption
+    if (checkoutUrlVal) {
+      try {
+        const startCmd = process.platform === 'win32' ? 'start ""' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+        spawnSync(`${startCmd} "http://localhost:5000/pay"`, { shell: true });
+        console.log(`\n🌐 Auto-opened checkout page in your default browser!`);
+      } catch (e) {}
+    }
     console.log(`\n👉 NEXT STEP (Run after completing action in browser):`);
     console.log(`   \x1b[32mnpm run test:payment:manual:verify -- ${caseId}\x1b[0m`);
     console.log(`═`.repeat(72) + `\n`);

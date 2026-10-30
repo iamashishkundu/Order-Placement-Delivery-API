@@ -1,0 +1,1490 @@
+const fs = require('fs');
+const path = require('path');
+
+function visualizerSnippet(scenarioTitle, cardDetails, instructions) {
+  return `
+    var res = pm.response.json();
+    if (res && res.data && res.data.checkoutUrl) {
+      var ordId = res.data.id || (res.data.order && res.data.order.id);
+      var checkoutUrl = res.data.checkoutUrl;
+      var total = res.data.totalAmount || (res.data.order && res.data.order.totalAmount) || "25.00";
+      pm.environment.set("orderId", ordId);
+      pm.environment.set("checkoutUrl", checkoutUrl);
+      var sessionMatch = checkoutUrl.match(/cs_test_[a-zA-Z0-9]+/);
+      if (sessionMatch) {
+        pm.environment.set("providerSessionId", sessionMatch[0]);
+      }
+
+      pm.visualizer.set(\`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 24px; margin: 0; }
+            .card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px; max-width: 650px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin: 0 auto; }
+            .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+            h2 { margin: 12px 0 6px 0; color: #0f172a; font-size: 20px; }
+            .meta { color: #64748b; font-size: 14px; margin-bottom: 16px; }
+            .button { display: inline-block; background: #4f46e5; color: white !important; font-weight: 600; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; margin: 12px 0; }
+            .button-alt { display: inline-block; background: #0284c7; color: white !important; font-weight: 600; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; margin: 12px 8px 12px 0; }
+            .steps { background: #f1f5f9; border-radius: 8px; padding: 14px 18px; margin-top: 14px; border-left: 4px solid #4f46e5; font-size: 13px; line-height: 1.5; }
+            .steps ol { margin: 6px 0 0 0; padding-left: 18px; }
+            .card-pill { font-family: monospace; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold; color: #0f172a; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <span class="badge">Checkout Active</span>
+            <h2>${scenarioTitle}</h2>
+            <div class="meta">Order ID: <code>\${ordId}</code> &bull; Total: <strong>$\${total} USD</strong></div>
+            
+            <div>
+              <a href="http://localhost:5000/pay" target="_blank" class="button">Open Checkout (Short Link) &rarr;</a>
+              <a href="\${checkoutUrl}" target="_blank" class="button-alt">Direct Stripe Link &rarr;</a>
+            </div>
+
+            <div class="steps">
+              <strong>Instructions:</strong>
+              <ol>
+                ${instructions}
+              </ol>
+              <div style="margin-top: 10px;">
+                <strong>Test Card:</strong> ${cardDetails}
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+      \`);
+    }
+  `;
+}
+
+const collection = {
+  info: {
+    name: "Order Placement & Delivery API - Interactive Scenarios",
+    description: "End-to-end interactive scenario collection covering the complete marketplace lifecycle: Vendor Registration & Verification -> Product Listing -> Customer Ordering -> Stripe Checkout -> Fulfillment & Status Transitions -> Refunds & Disputed Orders.",
+    schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  event: [
+    {
+      listen: "prerequest",
+      script: {
+        type: "text/javascript",
+        exec: [
+          "// Ensure runId is initialized for unique test isolation",
+          "if (!pm.environment.get('runId')) {",
+          "    var uniqueId = Date.now().toString().slice(-6);",
+          "    pm.environment.set('runId', uniqueId);",
+          "}"
+        ]
+      }
+    }
+  ],
+  item: [
+    // FOLDER 0: Setup & Auth (Run Once)
+    {
+      name: "0. Setup & Auth (Run Once)",
+      description: "Registers and verifies Admin, Vendor A, and Customers step-by-step. Every verification action (phone OTP, email OTP, admin approval, profile creation) is an explicit request.",
+      item: [
+        {
+          name: "0.1 Seeded Admin Login",
+          event: [
+            {
+              listen: "prerequest",
+              script: {
+                type: "text/javascript",
+                exec: [
+                  "// Generate fresh unique runId when starting setup to guarantee clean isolated accounts",
+                  "var uniqueId = Date.now().toString().slice(-6);",
+                  "pm.environment.set('runId', uniqueId);"
+                ]
+              }
+            },
+            {
+              listen: "test",
+              script: {
+                type: "text/javascript",
+                exec: [
+                  "pm.test('Admin logged in (200)', function () {",
+                  "    pm.expect(pm.response.code).to.eql(200);",
+                  "    var j = pm.response.json();",
+                  "    pm.environment.set('adminToken', j.data.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "email": "{{adminEmail}}",\n  "password": "{{adminPassword}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/admin/auth/login", host: ["{{baseUrl}}"], path: ["admin", "auth", "login"] },
+            description: "Logs in as Super Admin and stores adminToken."
+          }
+        },
+        {
+          name: "0.2 Create Category",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{adminToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "name": "Scenario Category {{runId}}",\n  "description": "Category for interactive scenarios"\n}'
+            },
+            url: { raw: "{{baseUrl}}/admin/category", host: ["{{baseUrl}}"], path: ["admin", "category"] },
+            description: "Creates an active category for vendors to list products under."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Category ready (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    var j = pm.response.json();",
+                "    pm.environment.set('categoryId', j.data.id);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.3 Register Vendor A",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "email": "vendorA_{{runId}}@marketplace.com",\n  "phone": "+12025550{{runId}}",\n  "password": "VendorPassword@123"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/register", host: ["{{baseUrl}}"], path: ["vendor", "auth", "register"] },
+            description: "Registers Vendor A account. Status starts as unverified."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A registered (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('vendorAId', json.data.id);"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.4 Send Phone OTP (Vendor A)",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025550{{runId}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/send-phone-otp", host: ["{{baseUrl}}"], path: ["vendor", "auth", "send-phone-otp"] },
+            description: "Dispatches SMS OTP to Vendor A's phone."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Phone OTP sent (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.5 Verify Phone OTP (Vendor A)",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025550{{runId}}",\n  "otp": "{{staticOtp}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/verify-phone-otp", host: ["{{baseUrl}}"], path: ["vendor", "auth", "verify-phone-otp"] },
+            description: "Submits OTP to verify Vendor A's phone number."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A phone verified (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.6 Send Email OTP (Vendor A)",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "email": "vendorA_{{runId}}@marketplace.com"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/send-email-otp", host: ["{{baseUrl}}"], path: ["vendor", "auth", "send-email-otp"] },
+            description: "Dispatches verification email with OTP to Vendor A."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Email OTP sent (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.7 Verify Email OTP (Vendor A)",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "email": "vendorA_{{runId}}@marketplace.com",\n  "otp": "{{staticOtp}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/verify-email-otp", host: ["{{baseUrl}}"], path: ["vendor", "auth", "verify-email-otp"] },
+            description: "Submits OTP to verify Vendor A's email address."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A email verified (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.8 Admin Approve Vendor A",
+          request: {
+            method: "PATCH",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/vendor-management/{{vendorAId}}/approve", host: ["{{baseUrl}}"], path: ["admin", "vendor-management", "{{vendorAId}}", "approve"] },
+            description: "Admin approves Vendor A. Status transitions to approved."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A approved by Admin (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.9 Vendor A Login",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "email": "vendorA_{{runId}}@marketplace.com",\n  "password": "VendorPassword@123"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/auth/login", host: ["{{baseUrl}}"], path: ["vendor", "auth", "login"] },
+            description: "Vendor A logs in with approved credentials and receives vendorAToken."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A logged in (200)', function () { pm.expect(pm.response.code).to.eql(200); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('vendorAToken', json.data.token);"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.10 Vendor A Create Profile",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "shopName": "Shop A {{runId}}",\n  "ownerName": "Alice Vendor",\n  "addressLine": "123 Market St",\n  "city": "San Francisco",\n  "state": "CA",\n  "pincode": "94105"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/profile", host: ["{{baseUrl}}"], path: ["vendor", "profile"] },
+            description: "Creates shop profile for Vendor A. Store is now fully active to list products."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor A profile created (201)', function () { pm.expect(pm.response.code).to.eql(201); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.11 Customer 1 Send OTP",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025552{{runId}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/auth/send-otp", host: ["{{baseUrl}}"], path: ["customer", "auth", "send-otp"] },
+            description: "Requests OTP for Customer 1."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 1 OTP sent (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.12 Customer 1 Verify OTP & Login",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025552{{runId}}",\n  "otp": "{{staticOtp}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/auth/verify-otp", host: ["{{baseUrl}}"], path: ["customer", "auth", "verify-otp"] },
+            description: "Verifies Customer 1 OTP, logs in, and saves customer1Token."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 1 verified (200)', function () { pm.expect(pm.response.code).to.eql(200); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('customer1Token', json.data.token);",
+                "pm.environment.set('customer1Id', json.data.customer.id);"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.13 Customer 1 Add Delivery Address",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "label": "Home",\n  "addressLine": "789 Pine St",\n  "city": "San Francisco",\n  "state": "CA",\n  "pincode": "94108",\n  "isDefault": true\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/address", host: ["{{baseUrl}}"], path: ["customer", "address"] },
+            description: "Sets up delivery address for Customer 1."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 1 address created (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('customer1AddressId', json.data.id);"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.14 Customer 2 Send OTP",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025553{{runId}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/auth/send-otp", host: ["{{baseUrl}}"], path: ["customer", "auth", "send-otp"] },
+            description: "Requests OTP for Customer 2 (needed for Scenario 4 limited stock test)."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 2 OTP sent (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.15 Customer 2 Verify OTP & Login",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: '{\n  "phone": "+12025553{{runId}}",\n  "otp": "{{staticOtp}}"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/auth/verify-otp", host: ["{{baseUrl}}"], path: ["customer", "auth", "verify-otp"] },
+            description: "Verifies Customer 2 OTP, logs in, and saves customer2Token."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 2 verified (200)', function () { pm.expect(pm.response.code).to.eql(200); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('customer2Token', json.data.token);",
+                "pm.environment.set('customer2Id', json.data.customer.id);"
+              ]
+            }
+          }]
+        },
+        {
+          name: "0.16 Customer 2 Add Delivery Address",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer2Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "label": "Work",\n  "addressLine": "999 Market St",\n  "city": "San Francisco",\n  "state": "CA",\n  "pincode": "94103",\n  "isDefault": true\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/address", host: ["{{baseUrl}}"], path: ["customer", "address"] },
+            description: "Sets up delivery address for Customer 2."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 2 address created (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+                "var json = pm.response.json();",
+                "pm.environment.set('customer2AddressId', json.data.id);"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 1: Happy Path Full Fulfillment
+    {
+      name: "Scenario 1: Happy Path E2E Order & Full Fulfillment",
+      description: "Full end-to-end journey: Vendor lists product -> Customer orders & pays -> Webhook fulfills to paid -> Vendor advances order through preparing, out for delivery, and delivered -> Admin verifies revenue.",
+      item: [
+        {
+          name: "1.1 Vendor Creates Product ($25.00, Stock: 10)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "categoryId": "{{categoryId}}",\n  "name": "Artisan Pizza {{$randomInt}}",\n  "price": 25.00,\n  "stock": 10\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/product", host: ["{{baseUrl}}"], path: ["vendor", "product"] },
+            description: "Vendor A lists a new product with 10 units in inventory at $25.00."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Product created (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    var j = pm.response.json();",
+                "    pm.environment.set('scenario1ProductId', j.data.id);",
+                "    pm.environment.set('scenario1ProductName', j.data.name);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.2 Customer Adds 2 Units to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{scenario1ProductId}}",\n  "quantity": 2\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds 2 units ($50.00 total) to their shopping cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Items added to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.3 Customer Places ONLINE Order (Returns Checkout Link)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Customer checks out with ONLINE payment. Reserves stock, creates pending order, and returns Stripe Checkout URL."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('ONLINE Order placed (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    var j = pm.response.json();",
+                "    pm.expect(j.data.checkoutUrl).to.be.a('string');",
+                "    pm.environment.set('scenario1OrderId', j.data.id);",
+                "});",
+                visualizerSnippet(
+                  "Scenario 1: Happy Path Payment",
+                  "<span class='card-pill'>4242 4242 4242 4242</span> &bull; Exp: 12/28 &bull; CVC: 123",
+                  "<li>Click the blue button above or visit <a href='http://localhost:5000/pay' target='_blank'>http://localhost:5000/pay</a>.</li><li>Enter test card <span class='card-pill'>4242 4242 4242 4242</span> and click Pay.</li><li>Observe your CLI listener forward <code>checkout.session.completed</code>.</li><li>Proceed to step 1.4 to confirm order is paid!</li>"
+                )
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.4 Verify Order State is Paid (After Paying in Browser)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/order/{{scenario1OrderId}}", host: ["{{baseUrl}}"], path: ["admin", "order", "{{scenario1OrderId}}"] },
+            description: "Run this after paying in your browser. Asserts that the webhook marked paymentStatus='paid' and item status='placed'."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order confirmed paid (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var ord = pm.response.json().data;",
+                "    pm.expect(ord.paymentStatus).to.eql('paid');",
+                "    pm.expect(ord.items[0].status).to.eql('placed');",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.5 Vendor Views Incoming Order in Orders List",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/order", host: ["{{baseUrl}}"], path: ["vendor", "order"] },
+            description: "Vendor sees the paid order with status 'placed'."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor sees paid order', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var res = pm.response.json();",
+                "    var orders = Array.isArray(res.data) ? res.data : (res.data.orders || []);",
+                "    pm.expect(orders.length).to.be.above(0);",
+                "    var targetId = pm.environment.get('scenario1OrderId');",
+                "    if (targetId) {",
+                "        var found = orders.some(o => o.id === targetId);",
+                "        pm.expect(found).to.be.true;",
+                "    }",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.6 Vendor Advances Status: placed -> preparing",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "status": "preparing"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/order/{{scenario1OrderId}}/status", host: ["{{baseUrl}}"], path: ["vendor", "order", "{{scenario1OrderId}}", "status"] },
+            description: "Vendor starts cooking/preparing the order."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Status moved to preparing (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.7 Vendor Advances Status: preparing -> out_for_delivery",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "status": "out_for_delivery"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/order/{{scenario1OrderId}}/status", host: ["{{baseUrl}}"], path: ["vendor", "order", "{{scenario1OrderId}}", "status"] },
+            description: "Vendor hands over order to courier."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Status moved to out_for_delivery (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.8 Vendor Advances Status: out_for_delivery -> delivered",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "status": "delivered"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/order/{{scenario1OrderId}}/status", host: ["{{baseUrl}}"], path: ["vendor", "order", "{{scenario1OrderId}}", "status"] },
+            description: "Courier completes delivery to customer."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order delivered successfully (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "1.9 Admin Checks Dashboard & Revenue Metrics",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/dashboard", host: ["{{baseUrl}}"], path: ["admin", "dashboard"] },
+            description: "Super Admin views financial summary. Asserts online revenue reflects completed payments."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Admin dashboard reflects completed revenue (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var d = pm.response.json().data;",
+                "    pm.expect(d).to.be.an('object');",
+                "    pm.expect(d.onlineRevenue).to.be.an('object');",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 2: Customer Cancels Paid Order (Automated Refund)
+    {
+      name: "Scenario 2: Cancellation & Automated Full Stripe Refund",
+      description: "Customer orders and pays, but cancels before vendor prepares. Backend automatically calls Stripe to issue a full refund and restores product stock.",
+      item: [
+        {
+          name: "2.1 Vendor Checks Initial Product Stock",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/product/{{scenario1ProductId}}", host: ["{{baseUrl}}"], path: ["vendor", "product", "{{scenario1ProductId}}"] },
+            description: "Records the baseline inventory before the order is placed."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Baseline stock recorded', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    pm.environment.set('baselineStockScenario2', pm.response.json().data.stock);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "2.2 Customer Adds 1 Unit to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{scenario1ProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds 1 unit to cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Item added to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "2.3 Customer Places ONLINE Order (Returns Checkout Link)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Places order for 1 unit ($25.00) and displays checkout link."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order placed (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    pm.environment.set('scenario2OrderId', pm.response.json().data.id);",
+                "});",
+                visualizerSnippet(
+                  "Scenario 2: Pay & Cancel Flow",
+                  "<span class='card-pill'>4242 4242 4242 4242</span>",
+                  "<li>Open <a href='http://localhost:5000/pay' target='_blank'>http://localhost:5000/pay</a> and pay with card 4242.</li><li>Wait for Stripe CLI to log <code>checkout.session.completed (200)</code>.</li><li>Then proceed to step 2.4 to cancel and trigger automated refund!</li>"
+                )
+              ]
+            }
+          }]
+        },
+        {
+          name: "2.4 Customer Cancels Paid Order (Triggers Stripe Refund)",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            url: { raw: "{{baseUrl}}/customer/order/{{scenario2OrderId}}/cancel", host: ["{{baseUrl}}"], path: ["customer", "order", "{{scenario2OrderId}}", "cancel"] },
+            description: "Cancels order while items are still 'placed'. Calls stripe.refunds.create automatically."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Cancellation and refund successful (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var j = pm.response.json().data;",
+                "    pm.expect(j.paymentStatus).to.eql('refunded');",
+                "    pm.expect(j.refundId).to.be.a('string');",
+                "    pm.environment.set('scenario2RefundId', j.refundId);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "2.5 Verify Product Stock Restored to Original Baseline",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/product/{{scenario1ProductId}}", host: ["{{baseUrl}}"], path: ["vendor", "product", "{{scenario1ProductId}}"] },
+            description: "Asserts product inventory has been returned back to original baseline."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Stock restored back to baseline', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var currentStock = pm.response.json().data.stock;",
+                "    pm.expect(currentStock).to.eql(pm.environment.get('baselineStockScenario2'));",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 3: Vendor Preparing Lockout
+    {
+      name: "Scenario 3: Vendor Preparing Lockout (409 Guard)",
+      description: "Demonstrates that once a vendor begins preparing food/goods, customer cancellation is strictly blocked with HTTP 409 ORDER_NOT_CANCELLABLE.",
+      item: [
+        {
+          name: "3.1 Customer Adds 1 Unit to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{scenario1ProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds 1 unit to cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Item added to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "3.2 Customer Places ONLINE Order (Returns Checkout Link)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Places order and renders checkout link."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order placed (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    pm.environment.set('scenario3OrderId', pm.response.json().data.id);",
+                "});",
+                visualizerSnippet(
+                  "Scenario 3: Preparing Lockout",
+                  "<span class='card-pill'>4242 4242 4242 4242</span>",
+                  "<li>Open <a href='http://localhost:5000/pay' target='_blank'>http://localhost:5000/pay</a> and pay with card 4242.</li><li>Wait for Stripe CLI to log <code>checkout.session.completed</code>.</li><li>Proceed to step 3.3 where vendor starts preparing!</li>"
+                )
+              ]
+            }
+          }]
+        },
+        {
+          name: "3.3 Vendor Moves Item to Preparing",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "status": "preparing"\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/order/{{scenario3OrderId}}/status", host: ["{{baseUrl}}"], path: ["vendor", "order", "{{scenario3OrderId}}", "status"] },
+            description: "Vendor starts fulfillment."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Vendor set status to preparing (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "3.4 Customer Attempts to Cancel -> Expects 409 ORDER_NOT_CANCELLABLE",
+          request: {
+            method: "PATCH",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            url: { raw: "{{baseUrl}}/customer/order/{{scenario3OrderId}}/cancel", host: ["{{baseUrl}}"], path: ["customer", "order", "{{scenario3OrderId}}", "cancel"] },
+            description: "Customer attempts cancellation. Server must reject with 409 because vendor has already started preparing."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Cancellation rejected with 409 conflict', function () {",
+                "    pm.expect(pm.response.code).to.eql(409);",
+                "    var err = pm.response.json().error;",
+                "    pm.expect(err.code).to.eql('ORDER_NOT_CANCELLABLE');",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 4: Flash Sale Stock Depletion (Out-of-Stock Guard)
+    {
+      name: "Scenario 4: Stock Depletion & Sold-Out Protection",
+      description: "Vendor sets stock to 1. Customer 1 buys the only item. Customer 2 attempts to checkout and is blocked with 400/409 INSUFFICIENT_STOCK.",
+      item: [
+        {
+          name: "4.1 Vendor Creates Flash-Sale Item (Stock: 1)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{vendorAToken}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "categoryId": "{{categoryId}}",\n  "name": "Limited Edition Sneaker {{$randomInt}}",\n  "price": 100.00,\n  "stock": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/vendor/product", host: ["{{baseUrl}}"], path: ["vendor", "product"] },
+            description: "Creates high-demand product with exactly 1 unit in stock."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Product created with stock 1 (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    pm.environment.set('flashSaleProductId', pm.response.json().data.id);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "4.2 Customer 1 Adds Flash-Sale Item to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{flashSaleProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds the last remaining unit to cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 1 added item to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "4.3 Customer 1 Places ONLINE Order (Claims Only Unit)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Customer 1 checks out. Stock drops from 1 to 0."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 1 successfully ordered unit (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "4.4 Customer 2 Tries to Order Same Item -> 400/409 INSUFFICIENT_STOCK",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer2Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{flashSaleProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 2 tries to add the now sold-out item. Server strictly rejects with 400/409 INSUFFICIENT_STOCK."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer 2 blocked due to zero stock (400 or 409)', function () {",
+                "    pm.expect([400, 409]).to.include(pm.response.code);",
+                "    var err = pm.response.json().error;",
+                "    pm.expect(err.code).to.eql('INSUFFICIENT_STOCK');",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "4.5 Vendor Verifies Remaining Stock is Exactly 0",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/product/{{flashSaleProductId}}", host: ["{{baseUrl}}"], path: ["vendor", "product", "{{flashSaleProductId}}"] },
+            description: "Vendor audits product: stock is verified as 0."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Stock is confirmed 0', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    pm.expect(pm.response.json().data.stock).to.eql(0);",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 5: Abandoned Session & Stock Restoration
+    {
+      name: "Scenario 5: Abandoned Checkout Session Expiration",
+      description: "Customer begins checkout (reserving inventory), but abandons the page. The session expires and inventory is automatically returned to the store.",
+      item: [
+        {
+          name: "5.1 Vendor Checks Product Stock",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/product/{{scenario1ProductId}}", host: ["{{baseUrl}}"], path: ["vendor", "product", "{{scenario1ProductId}}"] },
+            description: "Records stock prior to abandonment test."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Stock recorded', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    pm.environment.set('scenario5InitialStock', pm.response.json().data.stock);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "5.2 Customer Adds 1 Unit to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{scenario1ProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds 1 unit to cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Item added to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "5.3 Customer Places ONLINE Order (Stock Reserved)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Creates pending order and reserves 1 unit."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order placed (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    pm.environment.set('scenario5OrderId', pm.response.json().data.id);",
+                "});",
+                visualizerSnippet(
+                  "Scenario 5: Abandoned Checkout",
+                  "DO NOT PAY &bull; Abandon the page",
+                  "<li>Open the link to verify inventory was reserved.</li><li>Do NOT pay. Run <code>npm run stripe:expire</code> in your terminal.</li><li>Stripe CLI forwards <code>checkout.session.expired</code>.</li><li>Proceed to step 5.4 to verify order failed and stock restored!</li>"
+                )
+              ]
+            }
+          }]
+        },
+        {
+          name: "5.4 Verify Order Status is Failed (After Expiration)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/order/{{scenario5OrderId}}", host: ["{{baseUrl}}"], path: ["admin", "order", "{{scenario5OrderId}}"] },
+            description: "Run after expiring session. Confirms paymentStatus='failed' and item='cancelled'."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order failed and cancelled (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var j = pm.response.json().data;",
+                "    pm.expect(j.paymentStatus).to.eql('failed');",
+                "    pm.expect(j.items[0].status).to.eql('cancelled');",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "5.5 Verify Stock Returned Back to Original Baseline",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{vendorAToken}}" }],
+            url: { raw: "{{baseUrl}}/vendor/product/{{scenario1ProductId}}", host: ["{{baseUrl}}"], path: ["vendor", "product", "{{scenario1ProductId}}"] },
+            description: "Confirms product stock was replenished after expiration."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Stock restored back to original count', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    pm.expect(pm.response.json().data.stock).to.eql(pm.environment.get('scenario5InitialStock'));",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+
+    // SCENARIO 6: Fraud Dispute Simulation & Admin Review
+    {
+      name: "Scenario 6: Fraud Dispute / Chargeback Simulation & Audit",
+      description: "Customer pays using Stripe's official dispute trigger card 4000 0000 0000 0259. Webhook captures the dispute, flags it on Admin Dashboard, while keeping internal dispute details private from customers and vendors.",
+      item: [
+        {
+          name: "6.1 Customer Adds 1 Unit to Cart",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "productId": "{{scenario1ProductId}}",\n  "quantity": 1\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/cart/items", host: ["{{baseUrl}}"], path: ["customer", "cart", "items"] },
+            description: "Customer 1 adds 1 unit to cart."
+          },
+          event: [{
+            listen: "prerequest",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.sendRequest({",
+                "    url: pm.environment.get('baseUrl') + '/customer/cart',",
+                "    method: 'DELETE',",
+                "    header: { 'Authorization': 'Bearer ' + pm.environment.get('customer1Token') }",
+                "}, function () {});"
+              ]
+            }
+          }, {
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Item added to cart (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "6.2 Customer Places ONLINE Order (Returns Checkout Link)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Content-Type", value: "application/json" },
+              { key: "Authorization", value: "Bearer {{customer1Token}}" }
+            ],
+            body: {
+              mode: "raw",
+              raw: '{\n  "addressId": "{{customer1AddressId}}",\n  "paymentMethod": "ONLINE"\n}'
+            },
+            url: { raw: "{{baseUrl}}/customer/order", host: ["{{baseUrl}}"], path: ["customer", "order"] },
+            description: "Places order and renders checkout link."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Order placed (201)', function () {",
+                "    pm.expect(pm.response.code).to.eql(201);",
+                "    pm.environment.set('scenario6OrderId', pm.response.json().data.id);",
+                "});",
+                visualizerSnippet(
+                  "Scenario 6: Dispute Simulation",
+                  "<span class='card-pill'>4000 0000 0000 0259</span> &bull; Fraud Dispute Card",
+                  "<li>Open <a href='http://localhost:5000/pay' target='_blank'>http://localhost:5000/pay</a> and pay with card <span class='card-pill'>4000 0000 0000 0259</span>.</li><li>Stripe will charge the card AND automatically emit <code>charge.dispute.created</code>!</li><li>Proceed to step 6.3 to audit the dispute as Admin!</li>"
+                )
+              ]
+            }
+          }]
+        },
+        {
+          name: "6.3 Admin Checks Disputed Orders List",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/order?disputed=true", host: ["{{baseUrl}}"], path: ["admin", "order"], query: [{ key: "disputed", value: "true" }] },
+            description: "Admin views all currently disputed transactions."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Admin lists disputed orders (200)', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var res = pm.response.json();",
+                "    var orders = Array.isArray(res.data) ? res.data : (res.data.orders || []);",
+                "    pm.expect(orders.length).to.be.above(0);",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "6.4 Admin Inspects Order Dispute Details",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{adminToken}}" }],
+            url: { raw: "{{baseUrl}}/admin/order/{{scenario6OrderId}}", host: ["{{baseUrl}}"], path: ["admin", "order", "{{scenario6OrderId}}"] },
+            description: "Admin audits the order and views disputeReason, disputeStatus, disputeAmount."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Dispute details visible to admin', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var ord = pm.response.json().data;",
+                "    pm.expect(ord.isDisputed).to.be.true;",
+                "    pm.expect(ord.payment).to.be.an('object');",
+                "    pm.expect(ord.payment.dispute).to.be.an('object');",
+                "    pm.expect(ord.payment.dispute.disputeReason).to.eql('fraudulent');",
+                "});"
+              ]
+            }
+          }]
+        },
+        {
+          name: "6.5 Customer View Hides Dispute Details (Privacy Guard)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{customer1Token}}" }],
+            url: { raw: "{{baseUrl}}/customer/order/{{scenario6OrderId}}", host: ["{{baseUrl}}"], path: ["customer", "order", "{{scenario6OrderId}}"] },
+            description: "Customer checks their order: internal dispute fields are hidden."
+          },
+          event: [{
+            listen: "test",
+            script: {
+              type: "text/javascript",
+              exec: [
+                "pm.test('Customer order does not expose internal dispute fields', function () {",
+                "    pm.expect(pm.response.code).to.eql(200);",
+                "    var ord = pm.response.json().data;",
+                "    pm.expect(ord.disputeReason).to.be.undefined;",
+                "    pm.expect(ord.payment).to.be.undefined;",
+                "});"
+              ]
+            }
+          }]
+        }
+      ]
+    }
+  ]
+};
+
+const outputPath = path.join(__dirname, '..', 'postman', 'scenarios.collection.json');
+fs.writeFileSync(outputPath, JSON.stringify(collection, null, 2), 'utf8');
+console.log('Successfully generated postman/scenarios.collection.json');

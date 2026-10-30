@@ -14,23 +14,32 @@ const {
 } = require('../common/constants/orderStatus');
 
 /**
- * Expire stale online payments older than CHECKOUT_EXPIRY_MINUTES + 5 minutes.
+ * Expire stale online payments or reconcile missed webhooks.
  * Queries Stripe for session status:
+ * - If session IS paid: reconciles order to paid, sets items to placed, records payment intent.
  * - If session is NOT paid: cancels the order, restores stock, sets paymentStatus = failed.
+ *
+ * @param {Object} [options] - Optional override parameters.
+ * @param {boolean} [options.forceAll=false] - If true, checks all pending orders without waiting for 35 min cutoff.
  */
-const expireStalePayments = async () => {
+const expireStalePayments = async (options = {}) => {
   const expiryThresholdMinutes = (env.CHECKOUT_EXPIRY_MINUTES || 30) + 5;
   const cutoffTime = new Date(Date.now() - expiryThresholdMinutes * 60 * 1000);
 
+  const whereClause = {
+    paymentMethod: PAYMENT_METHOD.ONLINE,
+    paymentStatus: PAYMENT_STATUS.PENDING,
+  };
+
+  if (!options.forceAll) {
+    whereClause.createdAt = {
+      [Op.lte]: cutoffTime,
+    };
+  }
+
   try {
     const staleOrders = await Order.findAll({
-      where: {
-        paymentMethod: PAYMENT_METHOD.ONLINE,
-        paymentStatus: PAYMENT_STATUS.PENDING,
-        createdAt: {
-          [Op.lte]: cutoffTime,
-        },
-      },
+      where: whereClause,
       include: [
         {
           model: Payment,
@@ -40,19 +49,21 @@ const expireStalePayments = async () => {
     });
 
     if (staleOrders.length === 0) {
+      console.log('[StalePaymentsJob] No pending stale orders found.');
       return;
     }
 
-    console.log(`[StalePaymentsJob] Found ${staleOrders.length} candidate stale orders for expiration check.`);
+    console.log(`[StalePaymentsJob] Found ${staleOrders.length} candidate pending orders for verification/reconciliation.`);
 
     for (const order of staleOrders) {
       try {
         const payment = order.payment;
         let isPaidInStripe = false;
+        let session = null;
 
         if (payment && payment.providerSessionId) {
           try {
-            const session = await stripeService.retrieveSession(payment.providerSessionId);
+            session = await stripeService.retrieveSession(payment.providerSessionId);
             if (session && session.payment_status === 'paid') {
               isPaidInStripe = true;
             }
@@ -62,7 +73,41 @@ const expireStalePayments = async () => {
         }
 
         if (isPaidInStripe) {
-          console.log(`[StalePaymentsJob] Order ${order.id} is marked paid in Stripe; skipping expiration cancellation.`);
+          console.log(`[StalePaymentsJob] Order ${order.id} is marked paid in Stripe; reconciling missed webhook.`);
+          await sequelize.transaction(async (t) => {
+            const lockedOrder = await Order.findByPk(order.id, {
+              lock: t.LOCK.UPDATE,
+              transaction: t,
+            });
+
+            if (lockedOrder && lockedOrder.paymentStatus === PAYMENT_STATUS.PENDING) {
+              await lockedOrder.update(
+                { paymentStatus: PAYMENT_STATUS.PAID },
+                { transaction: t }
+              );
+
+              await OrderItem.update(
+                { status: ITEM_STATUS.PLACED },
+                {
+                  where: { orderId: order.id, status: ITEM_STATUS.PENDING_PAYMENT },
+                  transaction: t,
+                }
+              );
+
+              await Payment.update(
+                {
+                  status: PAYMENT_STATUS.PAID,
+                  providerPaymentIntentId: session?.payment_intent || payment.providerPaymentIntentId,
+                },
+                {
+                  where: { orderId: order.id },
+                  transaction: t,
+                }
+              );
+
+              console.log(`[StalePaymentsJob] Reconciled missed webhook for order ${order.id}: status=paid, items=placed.`);
+            }
+          });
           continue;
         }
 
