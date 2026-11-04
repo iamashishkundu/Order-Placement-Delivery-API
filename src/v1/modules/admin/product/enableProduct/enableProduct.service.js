@@ -1,4 +1,5 @@
 const Product = require('../../../vendor/models/product.model');
+const realtimeService = require('../../../../../common/services/realtime.service');
 const ApiError = require('../../../../../common/utils/ApiError');
 const ERROR_CODES = require('../../../../../common/constants/errorCodes');
 
@@ -12,10 +13,19 @@ const enableProduct = async (productId) => {
   product.isDisabledByAdmin = false;
   await product.save();
 
+  // Real-time broadcast AFTER database persistence
+  try {
+    realtimeService.emitProductAvailabilityChanged({
+      productId: product.id,
+      isVisible: product.isAvailable,
+    });
+  } catch (emitErr) {
+    console.error('[EnableProduct] Realtime emit error:', emitErr.message);
+  }
+
   return product;
 };
 
 module.exports = {
   enableProduct,
 };
-

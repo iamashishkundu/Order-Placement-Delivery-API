@@ -380,3 +380,191 @@ STRIPE_WEBHOOK_SECRET=whsec_your_secret_from_stripe_listen
    }
    ```
 
+---
+
+## Real-Time Features (Socket.IO)
+
+The API includes real-time capabilities powered by **Socket.IO** to provide live price changes, live stock updates, cart price recalculations, and instant notifications when items become unavailable.
+
+> [!NOTE]
+> **Architectural Exception**: All WebSocket infrastructure resides under `src/realtime/` (outside `src/v1/modules/`). This is a deliberate top-level system component like `src/webhooks/` and `src/jobs/` that crosses module boundaries. Business services interact exclusively through `src/common/services/realtime.service.js`.
+
+---
+
+### 1. Real-time Architecture & Guarantees
+
+```mermaid
+flowchart TD
+    Client[Socket.IO Client] <-->|Handshake / Events| Server[HTTP & Socket.IO Server]
+    Server --> Auth[socket.auth.js: JWT & PostgreSQL Re-check]
+    Server --> Handlers[socket.handlers.js: Rooms & Subscriptions]
+    BusinessCode[Business Actions / Webhooks] -->|Commit TX First| RealtimeService[common/services/realtime.service.js]
+    RealtimeService -->|Safe No-Op / Catch-all| Server
+```
+
+1. **Transactional Integrity**: Sockets **NEVER emit inside an uncommitted database transaction** or during a rollback. Emits occur strictly after `transaction.commit()` has resolved.
+2. **Safe No-Op Execution**: If the Socket.IO server is not running (such as in isolated CLI migrations, seeders, or scripts), `realtime.service.js` safely skips emitting without errors.
+3. **Resilient Failure Boundaries**: Sockets only update screens—the database remains the single source of truth. Any internal socket emit error is caught and logged; it **NEVER fails or rolls back** the underlying HTTP REST response.
+4. **No Cart Reservations**: Adding an item to the cart does **not** reserve stock. Stock decrement occurs atomically during `placeOrder` (for both COD and ONLINE). Sockets keep screens updated in real time.
+
+---
+
+### 2. Authentication & Room Architecture
+
+Sockets authenticate during the connection handshake using the exact same JWT as the REST API:
+
+```javascript
+const socket = io('http://localhost:5000', {
+  auth: { token: '<JWT_TOKEN>' } // or header: Authorization: Bearer <token>
+});
+```
+
+#### Authentication Rules:
+- Rejects missing, expired, or invalid JWTs with machine-readable error code `UNAUTHORIZED`.
+- Re-verifies user status in PostgreSQL:
+  - **Customer**: Rejects blocked customers (`ACCOUNT_BLOCKED`).
+  - **Vendor**: Rejects blocked (`VENDOR_BLOCKED`), rejected (`VENDOR_REJECTED`), and pending (`APPROVAL_PENDING`) vendors.
+  - **Admin**: Verifies against the `admins` table.
+- Enforces maximum concurrent socket connections per user (`SOCKET_MAX_CONNECTIONS_PER_USER`, default `5`).
+
+#### Room Topology:
+| Room Name | Joined By | Purpose |
+| :--- | :--- | :--- |
+| `product:<productId>` | Any authenticated socket that called `product:subscribe` | Receives live price and stock updates for that specific product |
+| `customer:<customerId>` | Customer upon successful connection | Receives personalized cart price recalculations and unavailability alerts |
+| `vendor:<vendorId>` | Vendor upon successful connection | Vendor-targeted real-time alerts |
+| `admin` | Super Admin upon successful connection | System-wide moderation broadcasts |
+
+#### Immediate Disconnect on Moderation:
+When an Admin calls `PATCH /api/v1/admin/customer-management/:id/block` or `PATCH /api/v1/admin/vendor-management/:id/block`, all live socket connections belonging to that user are immediately terminated with `io server disconnect`.
+
+---
+
+### 3. Event Reference
+
+#### A. Client $\rightarrow$ Server Events
+
+##### 1. `product:subscribe`
+Subscribes the socket to one or more visible products. Only approved products (vendor approved with completed profile, available, not admin-disabled, not soft-deleted) can be subscribed to.
+
+- **Payload**:
+  ```json
+  {
+    "productIds": ["77a15e42-6857-470c-b5bc-c180d342cb51"]
+  }
+  ```
+- **Acknowledgment Callback**:
+  ```json
+  {
+    "success": true,
+    "subscribed": ["77a15e42-6857-470c-b5bc-c180d342cb51"],
+    "rejected": [],
+    "totalSubscriptions": 1
+  }
+  ```
+- **Guards**:
+  - Sliding-window rate limit: 60 socket events per 10 seconds.
+  - Per-socket subscription cap: `SOCKET_MAX_SUBSCRIPTIONS` (default `100`).
+
+##### 2. `product:unsubscribe`
+Removes the socket from the specified product room(s).
+- **Payload**: `{ "productIds": ["<productId>"] }`
+- **Acknowledgment Callback**: `{ "success": true, "unsubscribed": ["<productId>"] }`
+
+---
+
+#### B. Server $\rightarrow$ Client Events
+
+##### 1. `product:priceUpdated`
+Broadcast to room `product:<productId>` when a vendor modifies their product's price.
+```json
+{
+  "productId": "77a15e42-6857-470c-b5bc-c180d342cb51",
+  "oldPrice": 20.00,
+  "newPrice": 25.00,
+  "currency": "USD",
+  "updatedAt": "2026-11-04T06:15:30.123Z"
+}
+```
+
+##### 2. `cart:priceChanged`
+Sent to personal room `customer:<customerId>` for each customer holding that product in their cart.
+```json
+{
+  "productId": "77a15e42-6857-470c-b5bc-c180d342cb51",
+  "oldPrice": 20.00,
+  "newPrice": 25.00,
+  "quantity": 2,
+  "newLineTotal": 50.00,
+  "updatedAt": "2026-11-04T06:15:30.125Z"
+}
+```
+
+##### 3. `product:stockUpdated`
+Broadcast to room `product:<productId>` whenever available stock changes.
+```json
+{
+  "productId": "77a15e42-6857-470c-b5bc-c180d342cb51",
+  "stock": 7,
+  "inStock": true,
+  "reason": "order_placed",
+  "updatedAt": "2026-11-04T06:18:10.456Z"
+}
+```
+**Stock Update Reasons**:
+- `order_placed`: Stock decremented upon order placement (COD & ONLINE).
+- `order_cancelled`: Stock restored upon customer or admin cancellation.
+- `payment_expired`: Stock restored when hosted checkout session expires or stale payment job cancels.
+- `refund_restock`: Stock restored upon full Stripe refund before fulfillment.
+- `vendor_update`: Vendor manually adjusted stock inventory.
+- `order_rollback`: Stock restored due to payment session creation failure.
+
+##### 4. `product:availabilityChanged`
+Broadcast to room `product:<productId>` when availability toggles, admin moderates, or product is soft-deleted.
+```json
+{
+  "productId": "77a15e42-6857-470c-b5bc-c180d342cb51",
+  "isVisible": false,
+  "updatedAt": "2026-11-04T06:20:00.000Z"
+}
+```
+
+##### 5. `cart:itemUnavailable`
+Delivered to room `customer:<customerId>` when a product in their cart cannot be fulfilled.
+```json
+{
+  "productId": "77a15e42-6857-470c-b5bc-c180d342cb51",
+  "availableStock": 2,
+  "cartQuantity": 5,
+  "reason": "insufficient_stock",
+  "updatedAt": "2026-11-04T06:20:45.000Z"
+}
+```
+**Reasons**: `out_of_stock`, `insufficient_stock`, `product_unavailable`, `product_disabled`, `product_deleted`.
+
+---
+
+### 4. Interactive Dev Monitor & Testing
+
+- **Interactive Dev Demo Monitor**: In development, open **`http://localhost:5000/dev/realtime`** to connect with a JWT, subscribe to products, and view a live color-coded event stream.
+- **Manual Testing Guide**: Read [`REALTIME-TESTING.md`](./REALTIME-TESTING.md) for full walkthroughs with Postman.
+- **Automated Real-Time Test Suite**: Run the 6-category automated test suite:
+  ```bash
+  npm run test:realtime
+  ```
+
+---
+
+### 5. Horizontal Scaling Design (Redis Adapter Ready)
+
+The real-time layer is designed for horizontal scaling across multiple Node.js processes. To scale horizontally across a cluster:
+1. Install `@socket.io/redis-adapter` and `ioredis`.
+2. In `src/realtime/socket.server.js`, attach the adapter:
+   ```javascript
+   const { createAdapter } = require('@socket.io/redis-adapter');
+   const { pubClient, subClient } = require('../config/redis');
+   io.adapter(createAdapter(pubClient, subClient));
+   ```
+3. Business services and event payloads remain completely unchanged because all broadcasts target logical rooms (`product:<id>`, `customer:<id>`), which the Redis adapter seamlessly routes across all server nodes.
+
+

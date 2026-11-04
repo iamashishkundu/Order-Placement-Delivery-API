@@ -1,9 +1,12 @@
+const http = require('http');
 const env = require('./config/env');
 const app = require('./app');
 const { connectDB, sequelize } = require('./config/database');
 const { startExpireStalePaymentsJob, stopExpireStalePaymentsJob } = require('./jobs/expireStalePayments.job');
+const { initSocketServer, closeSocketServer } = require('./realtime/socket.server');
 
-let server;
+const server = http.createServer(app);
+initSocketServer(server);
 
 const startServer = async () => {
   try {
@@ -14,8 +17,9 @@ const startServer = async () => {
       console.warn('Database connection warning (proceeding):', dbError.message);
     }
 
-    server = app.listen(env.PORT, () => {
+    server.listen(env.PORT, () => {
       console.log(`Server running in [${env.NODE_ENV}] mode on port ${env.PORT}`);
+      console.log(`Socket.IO real-time engine attached and ready.`);
       startExpireStalePaymentsJob();
     });
   } catch (error) {
@@ -27,6 +31,14 @@ const startServer = async () => {
 const gracefulShutdown = async (signal) => {
   console.log(`Received ${signal}. Shutting down gracefully...`);
   stopExpireStalePaymentsJob();
+
+  try {
+    await closeSocketServer();
+    console.log('Socket.IO server closed.');
+  } catch (socketErr) {
+    console.error('Error closing Socket.IO server:', socketErr.message);
+  }
+
   if (server) {
     server.close(async () => {
       console.log('HTTP server closed.');
@@ -55,5 +67,12 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
 
+module.exports = {
+  server,
+  startServer,
+  gracefulShutdown,
+};

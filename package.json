@@ -15,11 +15,14 @@
     "stripe:expire": "node scripts/stripe-expire.js",
     "stripe:listen": "node scripts/stripe-listen.js",
     "scenarios:generate": "node scripts/generate-scenarios-collection.js",
+    "realtime:generate": "node scripts/generate-realtime-collection.js",
     "test:scenarios:setup": "newman run postman/scenarios.collection.json -e postman/payment.environment.json --export-environment postman/payment.environment.json --folder \"0. Setup & Auth (Run Once)\"",
     "test:scenarios:stock": "newman run postman/scenarios.collection.json -e postman/payment.environment.json --export-environment postman/payment.environment.json --folder \"Scenario 4: Stock Depletion & Sold-Out Protection\"",
+    "test:scenarios:realtime": "newman run postman/realtime.collection.json -e postman/payment.environment.json --export-environment postman/payment.environment.json",
     "test:payment": "node scripts/run-payment-tests.js",
     "test:payment:manual:setup": "node scripts/run-manual-case.js setup",
-    "test:payment:manual:verify": "node scripts/run-manual-case.js verify"
+    "test:payment:manual:verify": "node scripts/run-manual-case.js verify",
+    "test:realtime": "node tests/realtime/run-realtime-tests.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
@@ -33,12 +36,14 @@
     "pg": "^8.13.3",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.5",
+    "socket.io": "^4.8.4",
     "stripe": "^23.0.1"
   },
   "devDependencies": {
     "newman": "^6.2.3",
     "newman-reporter-htmlextra": "^1.23.1",
     "nodemon": "^3.1.9",
-    "sequelize-cli": "^6.6.2"
+    "sequelize-cli": "^6.6.2",
+    "socket.io-client": "^4.8.4"
   }
 }

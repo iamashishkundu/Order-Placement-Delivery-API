@@ -1,4 +1,7 @@
 const Product = require('../../models/product.model');
+const CartItem = require('../../../customer/models/cartItem.model');
+const realtimeService = require('../../../../../common/services/realtime.service');
+const { ITEM_UNAVAILABLE_REASONS } = require('../../../../../realtime/events');
 const ApiError = require('../../../../../common/utils/ApiError');
 const ERROR_CODES = require('../../../../../common/constants/errorCodes');
 
@@ -19,10 +22,32 @@ const toggleAvailability = async (vendorId, productId, isAvailable) => {
   product.isAvailable = isAvailable;
   await product.save();
 
+  // Real-time broadcasts AFTER database persistence
+  try {
+    realtimeService.emitProductAvailabilityChanged({
+      productId: product.id,
+      isVisible: product.isAvailable,
+    });
+
+    if (!product.isAvailable) {
+      const affectedCarts = await CartItem.findAll({ where: { productId: product.id } });
+      for (const ci of affectedCarts) {
+        realtimeService.emitCartItemUnavailable({
+          customerId: ci.customerId,
+          productId: product.id,
+          availableStock: 0,
+          cartQuantity: ci.quantity,
+          reason: ITEM_UNAVAILABLE_REASONS.PRODUCT_UNAVAILABLE,
+        });
+      }
+    }
+  } catch (emitErr) {
+    console.error('[ToggleAvailability] Realtime emit error:', emitErr.message);
+  }
+
   return product;
 };
 
 module.exports = {
   toggleAvailability,
 };
-

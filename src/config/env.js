@@ -46,6 +46,11 @@ const env = Object.freeze({
   STRIPE_CANCEL_URL: process.env.STRIPE_CANCEL_URL || 'http://localhost:5000/api/v1/payments/cancel',
   CHECKOUT_EXPIRY_MINUTES: parseInt(process.env.CHECKOUT_EXPIRY_MINUTES, 10) || 30,
   CURRENCY: (process.env.CURRENCY || 'usd').toLowerCase(),
+
+  // Realtime & Socket.IO configuration
+  SOCKET_CORS_ORIGINS: process.env.SOCKET_CORS_ORIGINS || '*',
+  SOCKET_MAX_SUBSCRIPTIONS: parseInt(process.env.SOCKET_MAX_SUBSCRIPTIONS, 10) || 100,
+  SOCKET_MAX_CONNECTIONS_PER_USER: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_USER, 10) || 5,
 });
 
 module.exports = env;

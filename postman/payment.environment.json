@@ -1,175 +1,174 @@
 {
+  "_": {
+    "postman_variable_scope": "environment",
+    "postman_exported_at": "2026-11-04T06:53:56.922Z",
+    "postman_exported_using": "Newman/6.2.3"
+  },
   "id": "7b8923a1-2345-48ef-9012-paymentenv001",
   "name": "Order Delivery API - Stripe Payment Test Environment",
   "values": [
     {
-      "key": "baseUrl",
+      "type": "any",
       "value": "http://localhost:5000/api/v1",
-      "type": "default",
-      "enabled": true
+      "key": "baseUrl"
     },
     {
-      "key": "stripeWebhookSecret",
+      "type": "any",
       "value": "whsec_placeholder_secret",
-      "type": "secret",
-      "enabled": true
+      "key": "stripeWebhookSecret"
     },
     {
-      "key": "adminEmail",
+      "type": "any",
       "value": "admin@example.com",
-      "type": "default",
-      "enabled": true
+      "key": "adminEmail"
     },
     {
-      "key": "adminPassword",
+      "type": "any",
       "value": "AdminPassword@123",
-      "type": "default",
-      "enabled": true
+      "key": "adminPassword"
     },
     {
-      "key": "staticOtp",
+      "type": "any",
       "value": "123456",
-      "type": "default",
-      "enabled": true
+      "key": "staticOtp"
     },
     {
-      "key": "runId",
+      "type": "any",
+      "value": "215089",
+      "key": "runId"
+    },
+    {
+      "type": "any",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzODI5OWYyZi1mMTg3LTQ4YjctOWI5Ni0yNjNiZWUzOTlmZWEiLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3OTM3NzU1MTksImV4cCI6MTc5NDM4MDMxOX0.tOdfCd_7KDFgTOqna50_gcBHgfhrxmGVqQhj8kfTqwY",
+      "key": "adminToken"
+    },
+    {
+      "type": "any",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiY2NjZjYwZS02OWExLTQ2YTItOWRmNS1mOWZkM2Y3YWViNzkiLCJyb2xlIjoidmVuZG9yIiwiaWF0IjoxNzkzNzc1NTIwLCJleHAiOjE3OTQzODAzMjB9.-8-79KyA06FZbF4jOGPj96XnmZzUzwcV1b_rO1xsAJ0",
+      "key": "vendorAToken"
+    },
+    {
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "vendorBToken"
     },
     {
-      "key": "adminToken",
+      "type": "any",
+      "value": "bcccf60e-69a1-46a2-9df5-f9fd3f7aeb79",
+      "key": "vendorAId"
+    },
+    {
+      "type": "any",
       "value": "",
-      "type": "secret",
-      "enabled": true
+      "key": "vendorBId"
     },
     {
-      "key": "vendorAToken",
+      "type": "any",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkNmRmNGI3Ny03ZWE0LTQ3MmEtODc0ZC1jNTBjN2I0Yjg2ZGUiLCJyb2xlIjoiY3VzdG9tZXIiLCJpYXQiOjE3OTM3NzU1MjAsImV4cCI6MTc5NDM4MDMyMH0.ijhOnMtDgslxl8IdneNtiufankyHd33LP-m5kfMCPM8",
+      "key": "customer1Token"
+    },
+    {
+      "type": "any",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkYjhiMmRmMS04ZWU5LTQyYjQtYTMwYy0yMGQ5OGUzZGY2MTQiLCJyb2xlIjoiY3VzdG9tZXIiLCJpYXQiOjE3OTM3NzU1MjEsImV4cCI6MTc5NDM4MDMyMX0.xZFOgcWpqfjkuSQfZP078eykRbLa7InGy6lseVqONiQ",
+      "key": "customer2Token"
+    },
+    {
+      "type": "any",
+      "value": "d6df4b77-7ea4-472a-874d-c50c7b4b86de",
+      "key": "customer1Id"
+    },
+    {
+      "type": "any",
+      "value": "db8b2df1-8ee9-42b4-a30c-20d98e3df614",
+      "key": "customer2Id"
+    },
+    {
+      "type": "any",
+      "value": "1d7122cc-95a2-42ea-bc7a-0d57874b929c",
+      "key": "categoryId"
+    },
+    {
+      "type": "any",
       "value": "",
-      "type": "secret",
-      "enabled": true
+      "key": "productA1Id"
     },
     {
-      "key": "vendorBToken",
+      "type": "any",
       "value": "",
-      "type": "secret",
-      "enabled": true
+      "key": "productA2Id"
     },
     {
-      "key": "vendorAId",
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "productBId"
     },
     {
-      "key": "vendorBId",
+      "type": "any",
+      "value": "37a66bcf-3904-4bc9-8846-6f2011226486",
+      "key": "customer1AddressId"
+    },
+    {
+      "type": "any",
+      "value": "a2e19cca-0e07-4231-a340-afd26576e8fb",
+      "key": "customer2AddressId"
+    },
+    {
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "orderId"
     },
     {
-      "key": "customer1Token",
+      "type": "any",
       "value": "",
-      "type": "secret",
-      "enabled": true
+      "key": "checkoutUrl"
     },
     {
-      "key": "customer2Token",
+      "type": "any",
       "value": "",
-      "type": "secret",
-      "enabled": true
+      "key": "providerSessionId"
     },
     {
-      "key": "customer1Id",
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "orderAmountCents"
     },
     {
-      "key": "customer2Id",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "categoryId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "productA1Id",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "productA2Id",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "productBId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "customer1AddressId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "customer2AddressId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "orderId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "checkoutUrl",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "providerSessionId",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "orderAmountCents",
-      "value": "",
-      "type": "default",
-      "enabled": true
-    },
-    {
-      "key": "currency",
+      "type": "any",
       "value": "usd",
-      "type": "default",
-      "enabled": true
+      "key": "currency"
     },
     {
-      "key": "refundId",
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "refundId"
     },
     {
-      "key": "disputeId",
+      "type": "any",
       "value": "",
-      "type": "default",
-      "enabled": true
+      "key": "disputeId"
+    },
+    {
+      "type": "any",
+      "value": "2e995eba-7fed-41dd-a93f-3709146d3246",
+      "key": "flashSaleProductId"
+    },
+    {
+      "type": "any",
+      "value": "21ed69c6-ae2a-47c3-beb2-2cc925b96d83",
+      "key": "realtimeProductId"
+    },
+    {
+      "type": "any",
+      "value": "2d59b3c8-3170-4f4e-9efa-f00b3c8bc6e6",
+      "key": "order1Id"
+    },
+    {
+      "type": "any",
+      "value": "dee06907-e4e3-4962-87f0-4bad85e25fcb",
+      "key": "flashProductId"
     }
   ],
-  "_postman_variable_scope": "environment"
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2026-11-04T06:58:43.914Z",
+  "_postman_exported_using": "Newman/6.2.3"
 }

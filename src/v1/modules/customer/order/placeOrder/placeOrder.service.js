@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const { sequelize } = require('../../../../../config/database');
 const Order = require('../../models/order.model');
 const OrderItem = require('../../models/orderItem.model');
@@ -8,6 +9,11 @@ const Customer = require('../../models/customer.model');
 const Product = require('../../../vendor/models/product.model');
 const Vendor = require('../../../vendor/models/vendor.model');
 const stripeService = require('../../../../../common/services/stripe.service');
+const realtimeService = require('../../../../../common/services/realtime.service');
+const {
+  STOCK_UPDATE_REASONS,
+  ITEM_UNAVAILABLE_REASONS,
+} = require('../../../../../realtime/events');
 const {
   ITEM_STATUS,
   PAYMENT_STATUS,
@@ -71,6 +77,7 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
   let orderItemsToCreate = [];
   let totalAmount = 0;
   let paymentRecord = null;
+  let purchasedProducts = [];
 
   try {
     const productIds = cartItems.map((ci) => ci.productId).sort();
@@ -159,6 +166,12 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
       product.stock -= item.quantity;
       await product.save({ transaction });
 
+      purchasedProducts.push({
+        id: product.id,
+        stock: product.stock,
+        quantity: item.quantity,
+      });
+
       const priceAtPurchase = parseFloat(product.price);
       totalAmount += priceAtPurchase * item.quantity;
 
@@ -222,6 +235,39 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
     throw error;
   }
 
+  // Real-time broadcasts AFTER stock-decrement transaction commits
+  try {
+    for (const p of purchasedProducts) {
+      realtimeService.emitStockUpdated({
+        productId: p.id,
+        stock: p.stock,
+        reason: STOCK_UPDATE_REASONS.ORDER_PLACED,
+      });
+
+      const affectedCarts = await CartItem.findAll({
+        where: {
+          productId: p.id,
+          quantity: { [Op.gt]: p.stock },
+        },
+      });
+
+      for (const ci of affectedCarts) {
+        realtimeService.emitCartItemUnavailable({
+          customerId: ci.customerId,
+          productId: p.id,
+          availableStock: p.stock,
+          cartQuantity: ci.quantity,
+          reason:
+            p.stock <= 0
+              ? ITEM_UNAVAILABLE_REASONS.OUT_OF_STOCK
+              : ITEM_UNAVAILABLE_REASONS.INSUFFICIENT_STOCK,
+        });
+      }
+    }
+  } catch (emitErr) {
+    console.error('[PlaceOrder] Realtime emit error:', emitErr.message);
+  }
+
   // 4. AFTER COMMIT for ONLINE: create Stripe Checkout Session
   if (selectedPaymentMethod === PAYMENT_METHOD.ONLINE) {
     let checkoutSession;
@@ -249,6 +295,7 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
       );
 
       const compTx = await sequelize.transaction();
+      let restoredProducts = [];
       try {
         const orderToCancel = await Order.findByPk(createdOrderId, {
           lock: compTx.LOCK.UPDATE,
@@ -275,6 +322,10 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
             if (product) {
               product.stock += item.quantity;
               await product.save({ transaction: compTx });
+              restoredProducts.push({
+                productId: product.id,
+                stock: product.stock,
+              });
             }
           }
 
@@ -294,6 +345,19 @@ const placeOrder = async (customerId, { addressId, paymentMethod }) => {
       } catch (rollbackErr) {
         if (!compTx.finished) await compTx.rollback();
         console.error('[PlaceOrder Error] Compensation transaction failed:', rollbackErr.message);
+      }
+
+      // Emit rollback stock restore AFTER compensation transaction commits
+      try {
+        for (const rp of restoredProducts) {
+          realtimeService.emitStockUpdated({
+            productId: rp.productId,
+            stock: rp.stock,
+            reason: STOCK_UPDATE_REASONS.ORDER_ROLLBACK,
+          });
+        }
+      } catch (rollbackEmitErr) {
+        console.error('[PlaceOrder] Rollback emit error:', rollbackEmitErr.message);
       }
 
       throw ApiError.badGateway(

@@ -1,4 +1,5 @@
 const Vendor = require('../../../vendor/models/vendor.model');
+const realtimeService = require('../../../../../common/services/realtime.service');
 const ApiError = require('../../../../../common/utils/ApiError');
 const ERROR_CODES = require('../../../../../common/constants/errorCodes');
 const VENDOR_STATUS = require('../../../../../common/constants/vendorStatus');
@@ -21,6 +22,13 @@ const blockVendor = async (vendorId) => {
   vendor.status = VENDOR_STATUS.BLOCKED;
   await vendor.save();
 
+  // Immediately disconnect all active sockets for this blocked vendor
+  try {
+    realtimeService.disconnectUser(vendorId, 'vendor');
+  } catch (emitErr) {
+    console.error('[BlockVendor] Realtime disconnect error:', emitErr.message);
+  }
+
   const result = vendor.toJSON();
   delete result.passwordHash;
 
@@ -30,4 +38,3 @@ const blockVendor = async (vendorId) => {
 module.exports = {
   blockVendor,
 };
-

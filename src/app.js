@@ -8,6 +8,7 @@ const ERROR_CODES = require('./common/constants/errorCodes');
 const { successResponse } = require('./common/utils/apiResponse');
 const stripeWebhookRouter = require('./webhooks/stripe/handleStripeWebhook/handleStripeWebhook.route');
 const paymentResultRouter = require('./webhooks/stripe/paymentResultPages.route');
+const devDemoRouter = require('./realtime/devDemo.router');
 
 const app = express();
 
@@ -20,6 +21,9 @@ app.use(
 
 // Payment result landing pages (HTML UI for redirect after checkout)
 app.use(paymentResultRouter);
+
+// Interactive developer realtime event monitor (non-production only)
+app.use(devDemoRouter);
 
 // Global Middlewares
 app.use(cors());

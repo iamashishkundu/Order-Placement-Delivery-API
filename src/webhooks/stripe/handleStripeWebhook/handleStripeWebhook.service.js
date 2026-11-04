@@ -5,6 +5,8 @@ const Payment = require('../../../v1/modules/customer/models/payment.model');
 const StripeEvent = require('../../../v1/modules/customer/models/stripeEvent.model');
 const Product = require('../../../v1/modules/vendor/models/product.model');
 const stripeService = require('../../../common/services/stripe.service');
+const realtimeService = require('../../../common/services/realtime.service');
+const { STOCK_UPDATE_REASONS } = require('../../../realtime/events');
 const { notifyAdmin } = require('../../../common/services/notifyAdmin.service');
 const {
   ITEM_STATUS,
@@ -189,6 +191,8 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
             String(a.productId).localeCompare(String(b.productId))
           );
 
+          const restoredItems = [];
+
           for (const item of sortedItems) {
             item.status = ITEM_STATUS.CANCELLED;
             await item.save({ transaction });
@@ -200,6 +204,10 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
             if (product) {
               product.stock += item.quantity;
               await product.save({ transaction });
+              restoredItems.push({
+                productId: product.id,
+                stock: product.stock,
+              });
             }
           }
 
@@ -215,6 +223,20 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
           }
 
           await transaction.commit();
+
+          // Real-time broadcast AFTER transaction commit
+          try {
+            for (const ri of restoredItems) {
+              realtimeService.emitStockUpdated({
+                productId: ri.productId,
+                stock: ri.stock,
+                reason: STOCK_UPDATE_REASONS.PAYMENT_EXPIRED,
+              });
+            }
+          } catch (emitErr) {
+            console.error('[Stripe Webhook] Realtime emit error on expired session:', emitErr.message);
+          }
+
           console.log(`[Stripe Webhook] checkout.session.expired handled: Order ${order.id} cancelled & stock restored.`);
           return { received: true, message: 'Order session expired, cancelled, and stock restored.' };
         }
@@ -291,6 +313,7 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
             items.length > 0 &&
             items.every((i) => i.status === ITEM_STATUS.PLACED);
 
+          let restoredItems = [];
           if (everyItemPlaced) {
             const sortedItems = [...items].sort((a, b) =>
               String(a.productId).localeCompare(String(b.productId))
@@ -308,6 +331,10 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
               if (product) {
                 product.stock += item.quantity;
                 await product.save({ transaction });
+                restoredItems.push({
+                  productId: product.id,
+                  stock: product.stock,
+                });
               }
             }
             console.log(`[Stripe Webhook] Full refund: Order ${order.id} items cancelled and stock restored.`);
@@ -317,6 +344,21 @@ const handleStripeWebhook = async (rawPayload, signatureHeader) => {
         }
 
         await transaction.commit();
+
+        // Real-time broadcast AFTER transaction commit
+        if (restoredItems.length > 0) {
+          try {
+            for (const ri of restoredItems) {
+              realtimeService.emitStockUpdated({
+                productId: ri.productId,
+                stock: ri.stock,
+                reason: STOCK_UPDATE_REASONS.REFUND_RESTOCK,
+              });
+            }
+          } catch (emitErr) {
+            console.error('[Stripe Webhook] Realtime emit error on refund restock:', emitErr.message);
+          }
+        }
         return { received: true, message: 'Full refund recorded.' };
       } catch (err) {
         if (!transaction.finished) await transaction.rollback();

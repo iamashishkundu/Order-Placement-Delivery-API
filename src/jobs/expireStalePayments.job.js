@@ -7,6 +7,8 @@ const OrderItem = require('../v1/modules/customer/models/orderItem.model');
 const Payment = require('../v1/modules/customer/models/payment.model');
 const Product = require('../v1/modules/vendor/models/product.model');
 const stripeService = require('../common/services/stripe.service');
+const realtimeService = require('../common/services/realtime.service');
+const { STOCK_UPDATE_REASONS } = require('../realtime/events');
 const {
   PAYMENT_METHOD,
   PAYMENT_STATUS,
@@ -112,6 +114,7 @@ const expireStalePayments = async (options = {}) => {
         }
 
         // Cancel order and restore stock in a safe transaction with row locking
+        let restoredItems = [];
         await sequelize.transaction(async (t) => {
           // 1. Lock order row
           const lockedOrder = await Order.findByPk(order.id, {
@@ -142,6 +145,10 @@ const expireStalePayments = async (options = {}) => {
             if (product) {
               product.stock += item.quantity;
               await product.save({ transaction: t });
+              restoredItems.push({
+                productId: product.id,
+                stock: product.stock,
+              });
             }
           }
 
@@ -171,6 +178,21 @@ const expireStalePayments = async (options = {}) => {
 
           console.log(`[StalePaymentsJob] Expired stale order ${order.id}. Restored stock and marked failed.`);
         });
+
+        // Real-time broadcast AFTER transaction commit
+        if (restoredItems.length > 0) {
+          try {
+            for (const ri of restoredItems) {
+              realtimeService.emitStockUpdated({
+                productId: ri.productId,
+                stock: ri.stock,
+                reason: STOCK_UPDATE_REASONS.PAYMENT_EXPIRED,
+              });
+            }
+          } catch (emitErr) {
+            console.error('[StalePaymentsJob] Realtime emit error:', emitErr.message);
+          }
+        }
       } catch (err) {
         console.error(`[StalePaymentsJob] Error expiring order ${order.id}:`, err);
       }

@@ -4,6 +4,8 @@ const OrderItem = require('../../models/orderItem.model');
 const Payment = require('../../models/payment.model');
 const Product = require('../../../vendor/models/product.model');
 const stripeService = require('../../../../../common/services/stripe.service');
+const realtimeService = require('../../../../../common/services/realtime.service');
+const { STOCK_UPDATE_REASONS } = require('../../../../../realtime/events');
 const {
   ITEM_STATUS,
   PAYMENT_STATUS,
@@ -67,6 +69,7 @@ const cancelOrder = async (customerId, orderId) => {
       }
 
       const transaction = await sequelize.transaction();
+      let restoredItems = [];
       try {
         const lockedOrder = await Order.findByPk(order.id, {
           lock: transaction.LOCK.UPDATE,
@@ -97,23 +100,40 @@ const cancelOrder = async (customerId, orderId) => {
           if (product) {
             product.stock += item.quantity;
             await product.save({ transaction });
+            restoredItems.push({
+              productId: product.id,
+              stock: product.stock,
+            });
           }
         }
 
         await transaction.commit();
-
-        const derivedStatus = computeDerivedOrderStatus(order.items);
-        return {
-          message: 'Pending payment order cancelled, session expired, and stock restored.',
-          orderId: order.id,
-          derivedStatus,
-          paymentStatus: PAYMENT_STATUS.FAILED,
-          items: order.items,
-        };
       } catch (err) {
         if (!transaction.finished) await transaction.rollback();
         throw err;
       }
+
+      // Real-time broadcasts AFTER commit
+      try {
+        for (const ri of restoredItems) {
+          realtimeService.emitStockUpdated({
+            productId: ri.productId,
+            stock: ri.stock,
+            reason: STOCK_UPDATE_REASONS.ORDER_CANCELLED,
+          });
+        }
+      } catch (emitErr) {
+        console.error('[CancelOrder] Realtime emit error:', emitErr.message);
+      }
+
+      const derivedStatus = computeDerivedOrderStatus(order.items);
+      return {
+        message: 'Pending payment order cancelled, session expired, and stock restored.',
+        orderId: order.id,
+        derivedStatus,
+        paymentStatus: PAYMENT_STATUS.FAILED,
+        items: order.items,
+      };
     }
 
     // Case 2: ONLINE order paid -> create a full Stripe refund
@@ -132,6 +152,7 @@ const cancelOrder = async (customerId, orderId) => {
       });
 
       const transaction = await sequelize.transaction();
+      let restoredItems = [];
       try {
         const lockedOrder = await Order.findByPk(order.id, {
           lock: transaction.LOCK.UPDATE,
@@ -162,29 +183,47 @@ const cancelOrder = async (customerId, orderId) => {
           if (product) {
             product.stock += item.quantity;
             await product.save({ transaction });
+            restoredItems.push({
+              productId: product.id,
+              stock: product.stock,
+            });
           }
         }
 
         await transaction.commit();
-
-        const derivedStatus = computeDerivedOrderStatus(order.items);
-        return {
-          message: 'Paid order cancelled, full refund issued, and stock restored.',
-          orderId: order.id,
-          derivedStatus,
-          paymentStatus: PAYMENT_STATUS.REFUNDED,
-          refundId: refund.id,
-          items: order.items,
-        };
       } catch (err) {
         if (!transaction.finished) await transaction.rollback();
         throw err;
       }
+
+      // Real-time broadcasts AFTER commit
+      try {
+        for (const ri of restoredItems) {
+          realtimeService.emitStockUpdated({
+            productId: ri.productId,
+            stock: ri.stock,
+            reason: STOCK_UPDATE_REASONS.ORDER_CANCELLED,
+          });
+        }
+      } catch (emitErr) {
+        console.error('[CancelOrder] Realtime emit error:', emitErr.message);
+      }
+
+      const derivedStatus = computeDerivedOrderStatus(order.items);
+      return {
+        message: 'Paid order cancelled, full refund issued, and stock restored.',
+        orderId: order.id,
+        derivedStatus,
+        paymentStatus: PAYMENT_STATUS.REFUNDED,
+        refundId: refund.id,
+        items: order.items,
+      };
     }
   }
 
   // --- COD ORDER HANDLING ---
   const transaction = await sequelize.transaction();
+  let restoredItems = [];
   try {
     const sortedItems = [...order.items].sort((a, b) =>
       String(a.productId).localeCompare(String(b.productId))
@@ -202,24 +241,41 @@ const cancelOrder = async (customerId, orderId) => {
       if (product) {
         product.stock += item.quantity;
         await product.save({ transaction });
+        restoredItems.push({
+          productId: product.id,
+          stock: product.stock,
+        });
       }
     }
 
     await transaction.commit();
-
-    const derivedStatus = computeDerivedOrderStatus(order.items);
-    return {
-      message: 'Order cancelled successfully and product stock restored.',
-      orderId: order.id,
-      derivedStatus,
-      items: order.items,
-    };
   } catch (error) {
     if (!transaction.finished) {
       await transaction.rollback();
     }
     throw error;
   }
+
+  // Real-time broadcasts AFTER commit
+  try {
+    for (const ri of restoredItems) {
+      realtimeService.emitStockUpdated({
+        productId: ri.productId,
+        stock: ri.stock,
+        reason: STOCK_UPDATE_REASONS.ORDER_CANCELLED,
+      });
+    }
+  } catch (emitErr) {
+    console.error('[CancelOrder] Realtime emit error:', emitErr.message);
+  }
+
+  const derivedStatus = computeDerivedOrderStatus(order.items);
+  return {
+    message: 'Order cancelled successfully and product stock restored.',
+    orderId: order.id,
+    derivedStatus,
+    items: order.items,
+  };
 };
 
 module.exports = {
